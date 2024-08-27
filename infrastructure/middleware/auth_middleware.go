@@ -1,15 +1,14 @@
 package middleware
 
 import (
-	"context"
 	"loan-tracker/domain"
 	"loan-tracker/infrastructure"
+	"loan-tracker/repositories"
 	"log"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 )
@@ -51,16 +50,17 @@ func AuthMiddleware(client *mongo.Client) gin.HandlerFunc {
 			return
 		}
 
-		// Query the MongoDB database to verify the user
-		collection := client.Database("loan-tracker").Collection("users")
-		log.Println("Claims: ", claims)
-		log.Println("ClaimsID: ", claims.UserID)
-		uid, _ := primitive.ObjectIDFromHex(claims.UserID)
-		filter := bson.M{"_id": uid} // Assuming UserID is the _id in the database
+		userRepo := repositories.NewUserRepository(client)
+		var tem domain.User
+		tem.ID, err = primitive.ObjectIDFromHex(claims.UserID)
 
-		var user domain.User
-		err = collection.FindOne(context.TODO(), filter).Decode(&user)
-		log.Println(user, err)
+		if err != nil {
+			c.JSON(401, gin.H{"error": "Invalid user ID in JWT"})
+			c.Abort()
+			return
+		}
+
+		user, err := userRepo.FindByID(tem)
 		if err != nil {
 			if err == mongo.ErrNoDocuments {
 				c.JSON(401, gin.H{"error": "User not found"})
@@ -97,7 +97,7 @@ func AuthMiddleware(client *mongo.Client) gin.HandlerFunc {
 		}
 
 		c.Set("isadmin", user.IsAdmin)
-		c.Set("userid", uid.Hex())
+		c.Set("userid", user.ID.Hex())
 		log.Println(c.GetString("userid"), claims.UserID)
 
 		c.Next()
@@ -105,13 +105,14 @@ func AuthMiddleware(client *mongo.Client) gin.HandlerFunc {
 }
 
 // The middleware for Authentication
-func AdminMiddleware(c *gin.Context) {
-	isAdmin, exists := c.Get("isadmin") //fetching the data from the context
-	if !exists || !isAdmin.(bool) {
-		c.JSON(403, gin.H{"error": "Forbidden: You don't have admin privileges"})
-		c.Abort()
-		return
+func AdminMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		isAdmin, exists := c.Get("isadmin")
+		if !exists || !isAdmin.(bool) {
+			c.JSON(403, gin.H{"error": "Forbidden: You don't have admin privileges"})
+			c.Abort()
+			return
+		}
+		c.Next()
 	}
-
-	c.Next()
 }
